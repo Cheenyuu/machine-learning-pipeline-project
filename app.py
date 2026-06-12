@@ -62,9 +62,37 @@ def load_data():
             dataframe = pd.concat([dataframe, cur_df], ignore_index = True)
     return dataframe
 
+def usability_check(dataframe, feature):
+    numeric_count = pd.to_numeric(dataframe[feature], errors = 'coerce').notnull().sum()
+    total_count = dataframe[feature].notnull().sum()
+    #if the ratio of numeric values is either 100% or 0%, then we can say that it is either continuous or categorical, respectively. Otherwise, we have a mixed type and we need to do some more work to determine which one it is.
+    print(numeric_count)
+    print(total_count)
+    return numeric_count / total_count >= 1.0 or numeric_count / total_count <= 0.0
+
 def test_continuous(dataframe, feature):
-    
-    return
+    #first let's test if the values themselves are numeric
+    try:
+        dataframe[feature] = pd.to_numeric(dataframe[feature], errors = 'coerce')
+    except Exception as e:
+        return False
+    #ratio test
+    n_unique = dataframe[feature].nunique()
+    ratio = n_unique / len(dataframe)
+    if n_unique < 10 or ratio < 0.05:
+        return False
+    #diff test
+    if pd.api.types.is_integer_dtype(dataframe[feature]):
+        diffs = np.diff(sorted(dataframe[feature].unique()))
+        if len(np.unique(diffs)) <= 3:
+            return False
+    #entropy test (continuous features should have higher entropy)    
+    from scipy.stats import entropy
+    counts = dataframe[feature].value_counts()
+    prob = counts / counts.sum()
+    if entropy(prob) < 1.0:
+        return False
+    return True
 
 def preprocess(dataframe):
     #preprocessing
@@ -76,73 +104,42 @@ def preprocess(dataframe):
         print("no output")
     #it's more likely that we need some kind of human intervention here.
     #dataframe.drop([target_column], axis = 1, inplace = True)
+
+    #we want to get rid of as many garbage tokens as possible, and then we will determine whether or not the feature is categorical or continuous
+    GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
+
     for feature in dataframe.columns:
         print(f"{feature}: {dataframe[feature].dtype}")
-        #get rid of any \t or extra spaces for each entry
-        if pd.api.types.is_object_dtype(dataframe[feature]) or pd.api.types.is_string_dtype(dataframe[feature]):
-            #these operations need to be done to do automatic testing to see if it is categorical
-            dataframe[feature] = dataframe[feature].str.strip()
-            #fill null values with the most common
-            dataframe[feature] = dataframe[feature].replace('?', np.nan)
-            dataframe[feature] = dataframe[feature].fillna(dataframe[feature].mode()[0])
-            unique_values = dataframe[feature].dropna().unique()
-            
-            
-            #I want to get rid of this so that the program can be automatic
-            if len(unique_values) > 5:
-                print(f"{feature} has many categories, is this a categorical feature?")
-                print("unique categories: ")
-                print(unique_values)
-                answer = input("YES (Y) | NO (N)\n").strip().upper()
-                while answer not in ("YES", "NO", "Y", "N"):
-                    print("ERROR: No valid answer given")
-                    answer = input("YES (Y) | NO (N)\n").strip().upper()
-                    print(answer) 
-                if answer in ("NO", "N"):
-                    tbd_list.append(feature)
-                    continue
-                #if the answer is yes, then this 'if' will still go on
-            
-            unique_count = dataframe[feature].nunique()
-            ratio = unique_count / len(dataframe)
-            if ratio > 0.5:
-                #likely continuous, so we need to test it
-                test_continuous(dataframe, feature)
 
-            
-            categorical_preprocessing(dataframe, feature, unique_values)
-        elif pd.api.types.is_numeric_dtype(dataframe[feature]):
-            dataframe[feature] = dataframe[feature].astype(str).str.strip()
-            dataframe[feature] = dataframe[feature].replace('?', np.nan)
-            dataframe[feature] = pd.to_numeric(dataframe[feature], errors = 'coerce')
-            dataframe[feature] = dataframe[feature].fillna(dataframe[feature].mean())
-            unique_values = dataframe[feature].dropna().unique()
-            if len(unique_values) < 5:
-                print(f"{feature} has few numerical inputs, is this a continuous feature?")
-                print("unique categories: ")
-                print(unique_values)
-                answer = input("YES (Y) | NO (N)\n").strip().upper()
-                while answer not in ("YES", "NO", "Y", "N"):
-                    print("ERROR: No valid answer given")
-                    answer = input("YES (Y) | NO (N)\n").strip().upper()
-                    print(answer) 
-                if answer in ("NO", "N"):
-                    tbd_list.append(feature)
+        dataframe[feature] = dataframe[feature].astype(str).str.strip()
+        dataframe[feature] = dataframe[feature].replace(GARBAGE_TOKENS, np.nan)
+        
+        #now we can determine whether or not we have mixed types of numerical and categorical data
+        if not usability_check(dataframe, feature):
+            #mixed type would be very difficult to preprocess, so we will just drop it for now. 
+            dataframe[feature].drop(columns = feature)
+            continue
+        #now we need to determine whether or not it is continuous or categorical
+        #we are only testing whether or not it is categorical or continuous
+        continuous = test_continuous(dataframe, feature)  
+
+        if continuous:
+            try:
+                dataframe[feature] = pd.to_numeric(dataframe[feature], errors = 'coerce')
+                dataframe[feature] = dataframe[feature].fillna(dataframe[feature].mean())
+                normalization(dataframe, feature)
+            except Exception as e:
+                print(f"Error processing {feature} as continuous: {e}")
+        else:
+            try:
+                #we need to test if it's all unique values, in which case we can just drop it. Otherwise, we can do categorical preprocessing.
+                if dataframe[feature].nunique() == dataframe[feature].notnull().sum():
+                    dataframe.drop(columns = feature, inplace = True)
                     continue
-            normalization(dataframe, feature)
-    for feature in tbd_list:
-        print(f"[][][][] is {feature} 1. categorical or 2. continuous? [][][][]")
-        unique_values = dataframe[feature].dropna().unique()
-        print(unique_values)
-        answer = None
-        while answer not in ("1", "2"):
-            answer = input("[1] or [2]\n")
-        if answer == "1":
-            categorical_preprocessing(dataframe, feature, unique_values)
-        elif answer == "2":
-            #insurance
-            dataframe[feature] = pd.to_numeric(dataframe[feature], errors = 'coerce')
-            normalization(dataframe, feature)
+                dataframe[feature] = dataframe[feature].fillna(dataframe[feature].mode()[0])
+                categorical_preprocessing(dataframe, feature, dataframe[feature].dropna().unique())
+            except Exception as e:
+                print(f"Error processing {feature} as categorical: {e}")
     return dataframe
 
 """
@@ -162,20 +159,6 @@ def modeling():
 
 def main():
     return
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 dataframe = load_data()
