@@ -4,25 +4,24 @@ import numpy as np
 from scipy.stats import pearsonr
 
 def categorical_preprocessing(dataframe, feature, unique_values):
-    #make them numerical for our modeling
-    swap_map = {
-        value: i
-        for i, value in enumerate(unique_values)
-    }
     #binary encoding, nominal or ordinance does not really matter
     if len(unique_values) <= 2:
         try:
-            dataframe[feature] = dataframe[feature].map(swap_map)
+            dataframe[feature], _ = dataframe[feature].factorize()
             return 1
         except Exception as e:
             print(f"Error mapping {feature}: {e}")
             return 0
-    #one-hot encoding for more than one category
+    #one-hot encoding for more than two categories
     else:
         for value in unique_values:
-            dataframe[f"{feature}_{value}"] = (dataframe[feature] == value).astype(int)
+            try:
+                dataframe[f"{feature}_{value}"] = (dataframe[feature] == value).astype(int)
+            except Exception as e:
+                print(f"Error creating one-hot column for {feature}_{value}: {e}")
+                return 0
         dataframe.drop(columns = [feature], inplace = True)
-
+        return 1
 
 def normalization(dataframe, feature):
     #with the dataframe and the feature, I need to be able to normalize
@@ -66,29 +65,27 @@ def usability_check(dataframe, feature):
     numeric_count = pd.to_numeric(dataframe[feature], errors = 'coerce').notnull().sum()
     total_count = dataframe[feature].notnull().sum()
     #if the ratio of numeric values is either 100% or 0%, then we can say that it is either continuous or categorical, respectively. Otherwise, we have a mixed type and we need to do some more work to determine which one it is.
-    print(numeric_count)
-    print(total_count)
     return numeric_count / total_count >= 1.0 or numeric_count / total_count <= 0.0
 
-def test_continuous(dataframe, feature):
+def test_continuous(series):
     #first let's test if the values themselves are numeric
     try:
-        dataframe[feature] = pd.to_numeric(dataframe[feature], errors = 'coerce')
+        temp = pd.to_numeric(series, errors = 'coerce')
     except Exception as e:
         return False
     #ratio test
-    n_unique = dataframe[feature].nunique()
-    ratio = n_unique / len(dataframe)
+    n_unique = temp.nunique()
+    ratio = n_unique / len(series)
     if n_unique < 10 or ratio < 0.05:
         return False
     #diff test
-    if pd.api.types.is_integer_dtype(dataframe[feature]):
-        diffs = np.diff(sorted(dataframe[feature].unique()))
+    if pd.api.types.is_integer_dtype(temp):
+        diffs = np.diff(sorted(temp.unique()))
         if len(np.unique(diffs)) <= 3:
             return False
     #entropy test (continuous features should have higher entropy)    
     from scipy.stats import entropy
-    counts = dataframe[feature].value_counts()
+    counts = temp.value_counts()
     prob = counts / counts.sum()
     if entropy(prob) < 1.0:
         return False
@@ -96,21 +93,12 @@ def test_continuous(dataframe, feature):
 
 def preprocess(dataframe):
     #preprocessing
-    target_column = "classification"
-    target_frame = dataframe[target_column]
-    #features that need specification
-    tbd_list = []
-    if target_column not in dataframe.columns:
-        print("no output")
     #it's more likely that we need some kind of human intervention here.
     #dataframe.drop([target_column], axis = 1, inplace = True)
-
     #we want to get rid of as many garbage tokens as possible, and then we will determine whether or not the feature is categorical or continuous
     GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
 
     for feature in dataframe.columns:
-        print(f"{feature}: {dataframe[feature].dtype}")
-
         dataframe[feature] = dataframe[feature].astype(str).str.strip()
         dataframe[feature] = dataframe[feature].replace(GARBAGE_TOKENS, np.nan)
         
@@ -121,7 +109,7 @@ def preprocess(dataframe):
             continue
         #now we need to determine whether or not it is continuous or categorical
         #we are only testing whether or not it is categorical or continuous
-        continuous = test_continuous(dataframe, feature)  
+        continuous = test_continuous(dataframe[feature])  
 
         if continuous:
             try:
@@ -142,25 +130,34 @@ def preprocess(dataframe):
                 print(f"Error processing {feature} as categorical: {e}")
     return dataframe
 
-"""
-def feature_selection(preprocessed_dataframe):
+
+def feature_selection(preprocessed_dataframe, y):
     #now I need to do a correlation test to determine whether or not 
     legend = {}
-    for feature in preprocessed_dataframe.drop(columns = ['classification'], axis = 1).columns:
-        corr_val = pearsonr(preprocessed_dataframe[feature], preprocessed_dataframe['classification'])[0]
-        legend[feature] = corr_val
-    
+
+    from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+
+    continuous = test_continuous()
+
+    """
+    for feature in preprocessed_dataframe.columns:
+        corr_val = pearsonr(preprocessed_dataframe[feature], y)[0]
+        legend[feature] = abs(corr_val)
     print(legend)
+    """
     return
-"""
+
 
 def modeling():
     return
 
-def main():
-    return
+def main():    
+    csv_data = load_data()
+    target_column = "classification"
+    X = csv_data.copy()
+    y = X.pop(target_column)
+    processed_dataframe = preprocess(X)
+    print(processed_dataframe.columns)
+    #feature_selection(processed_dataframe, y)
 
-
-dataframe = load_data()
-df = preprocess(dataframe)
-print(df)
+main()
