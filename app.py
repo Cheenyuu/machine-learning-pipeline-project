@@ -93,8 +93,11 @@ def test_continuous(series):
 
 def preprocess(dataframe):
     #preprocessing
-    #it's more likely that we need some kind of human intervention here.
-    #dataframe.drop([target_column], axis = 1, inplace = True)
+    
+    #get rid of any constant columns
+    constant_cols = [col for col in dataframe.columns if dataframe[col].nunique() <= 1]
+    dataframe.drop(columns = constant_cols, inplace = True)
+    
     #we want to get rid of as many garbage tokens as possible, and then we will determine whether or not the feature is categorical or continuous
     GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
 
@@ -128,18 +131,38 @@ def preprocess(dataframe):
                 categorical_preprocessing(dataframe, feature, dataframe[feature].dropna().unique())
             except Exception as e:
                 print(f"Error processing {feature} as categorical: {e}")
+        #by the end, we know everything should be numerical, so we can test the variance of the entire dataset to determine whether or not we need to 
+        #drop those columns
+        threshold = 0.01
+        #variance = dataframe[feature].var()
+
+    threshold = 0.01
+    low_var_cols = [col for col in dataframe.columns if dataframe[col].var() < threshold]
+    try:
+        dataframe.drop(columns = low_var_cols, inplace = True)
+    except Exception as e:
+        print(f"Error dropping low variance columns: {e}")
     return dataframe
 
 
 def feature_selection(preprocessed_dataframe, y):
+    from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
+    continuous = test_continuous(y)
+    #[True, False, ..., True] for every feature, define whether or not it is discrete or not
+    is_discrete = preprocessed_dataframe.dtypes == int
+    if(continuous):
+        mi = mutual_info_regression(preprocessed_dataframe, y, discrete_features = is_discrete)
+    else:
+        mi = mutual_info_classif(preprocessed_dataframe, y, discrete_features = is_discrete)
+    mi = pd.Series(mi, index = preprocessed_dataframe.columns, name = "mutual_info")
+    mi = mi.sort_values(ascending = False)
+    return mi
+
+
+    
+    """
     #now I need to do a correlation test to determine whether or not 
     legend = {}
-
-    from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
-
-    continuous = test_continuous()
-
-    """
     for feature in preprocessed_dataframe.columns:
         corr_val = pearsonr(preprocessed_dataframe[feature], y)[0]
         legend[feature] = abs(corr_val)
@@ -156,8 +179,8 @@ def main():
     target_column = "classification"
     X = csv_data.copy()
     y = X.pop(target_column)
-    processed_dataframe = preprocess(X)
-    print(processed_dataframe.columns)
-    #feature_selection(processed_dataframe, y)
-
+    preprocessed_dataframe = preprocess(X)
+    print(preprocessed_dataframe.columns)
+    #mi = feature_selection(processed_dataframe, y)
+    #print(mi)
 main()
