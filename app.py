@@ -23,6 +23,13 @@ def categorical_preprocessing(dataframe, feature, unique_values):
         dataframe.drop(columns = [feature], inplace = True)
         return 1
 
+def target_categorical_preprocessing(target_column):
+    try:
+        target_column, _ = target_column.factorize()
+        return target_column
+    except Exception as e:
+        print(f"Error converting target column to integer value")
+
 def normalization(dataframe, feature):
     #with the dataframe and the feature, I need to be able to normalize
     series = dataframe[feature]
@@ -41,6 +48,10 @@ def normalization(dataframe, feature):
         print(f"Error normalizing {feature}: {e}")
         return 0
 
+class ManyFilesError(Exception):
+    """Too many files within a single folder"""
+    pass
+
 def load_data():
     #data collection
     folder_path = "raw_data"
@@ -58,7 +69,7 @@ def load_data():
         if dataframe is None:
             dataframe = pd.read_csv(f"raw_data/{file_name}")
         else:
-            dataframe = pd.concat([dataframe, cur_df], ignore_index = True)
+            raise ManyFilesError("Only one file in the folder at a time")
     return dataframe
 
 def usability_check(dataframe, feature):
@@ -145,9 +156,8 @@ def preprocess(dataframe):
     return dataframe
 
 
-def feature_selection(preprocessed_dataframe, y):
+def feature_selection(preprocessed_dataframe, y, continuous):
     from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
-    continuous = test_continuous(y)
     preprocessed_dataframe["random_noise"] = np.random.randn(len(preprocessed_dataframe))
     #[True, False, ..., True] for every feature, define whether or not it is discrete or not
     is_discrete = preprocessed_dataframe.dtypes == int
@@ -164,7 +174,52 @@ def feature_selection(preprocessed_dataframe, y):
     return
 
 
-def modeling():
+def evaulation(models, X, y):
+    from sklearn.model_selection import cross_val_score
+    best_model = None
+    best_score = float("-inf")
+    print("Models Evaluated:")
+    print("------------------------------")
+    for model in models:
+        score = cross_val_score(models[model], X, y, cv = 5, scoring = "r2").mean()
+        print(f"{model}")
+        print(f"Cross validation score mean: {score}\n\n")
+        if score > best_score:
+            best_score = score
+            best_model = model
+    print(f"Selected model: {best_model}")
+    return best_model
+
+def modeling(X, y, continuous):
+    from sklearn.linear_model import LinearRegression, LogisticRegression
+    from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+    from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+    from sklearn.model_selection import cross_val_score
+
+    models = {}
+
+    if continuous:
+        #we train regression models for a continuous target
+        #Linear Regression
+        models = {
+            "Linear Regression": LinearRegression(),
+            "Regressor Decision Tree": DecisionTreeRegressor(),
+            "Regressor Random Forest": RandomForestRegressor()
+        }
+
+    else:
+        y = target_categorical_preprocessing(y)
+        models = {
+            "Logistic Regression": LogisticRegression(),
+            "Decision Tree": DecisionTreeClassifier(),
+            "Random Forest": RandomForestClassifier()
+        }
+        
+    try:
+        best_model = evaulation(models, X, y)
+    except Exception as e:
+        print(f"Error evaluating models: {e}")
+
     return
 
 
@@ -173,14 +228,19 @@ def main():
     csv_data = load_data()
     target_column = "classification"
     X = csv_data.copy()
+
+    #I need to preprocess some of the data separately for the target column
+    GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
+    X[target_column] = X[target_column].astype(str).str.strip()
+    X[target_column] = X[target_column].replace(GARBAGE_TOKENS, np.nan)
+
     y = X.pop(target_column)
     preprocessed_dataframe = preprocess(X)
     number_of_features = preprocessed_dataframe.shape[1]
-    feature_selection(preprocessed_dataframe, y)
+    continuous = test_continuous(y)
+    feature_selection(preprocessed_dataframe, y, continuous)
     print(F"features: {preprocessed_dataframe.columns.tolist()}")
     print(f"Removed {number_of_features - preprocessed_dataframe.shape[1]} features, kept {preprocessed_dataframe.shape[1]} features.")
-    #mi = feature_selection(preprocessed_dataframe, y)
-    #print(f"feature list: {mi}")
-    #number_of_selected_features = len(mi)
-    #print(f"Removed {number_of_features - number_of_selected_features} features, kept {number_of_selected_features} features.")
+    modeling(preprocessed_dataframe, y, continuous)
+
 main()
