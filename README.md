@@ -82,7 +82,6 @@ project/
 |-- app.py
 |
 └-- README.md
-
 '''
 
 ## Installation
