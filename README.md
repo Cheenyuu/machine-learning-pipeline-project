@@ -14,12 +14,12 @@ The goal of the project is to minimize manual preprocessing and model selection 
 
 * Removes constant- value columns
 * Handles missing value tokens:
-  * '?'
-  * 'NA'
-  * 'N/A'
-  * 'null'
-  * 'None'
-  * 'nan'
+  * [?]
+  * [NA]
+  * [N/A]
+  * [null]
+  * [None]
+  * [nan]
 
 ### Feature Type Detection
 
