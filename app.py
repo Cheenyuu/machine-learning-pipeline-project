@@ -174,20 +174,25 @@ def feature_selection(preprocessed_dataframe, y, continuous):
     return
 
 
-def evaulation(models, X, y):
+def evaulation(models, X, y, continuous):
     from sklearn.model_selection import cross_val_score
+    scoring = 'r2'
+    if continuous:
+        scoring = 'f1'
+    model_name = None
     best_model = None
     best_score = float("-inf")
     print("Models Evaluated:")
     print("------------------------------")
     for model in models:
-        score = cross_val_score(models[model], X, y, cv = 5, scoring = "r2").mean()
+        score = cross_val_score(models[model], X, y, cv = 5, scoring = scoring).mean()
         print(f"{model}")
         print(f"Cross validation score mean: {score}\n\n")
         if score > best_score:
             best_score = score
-            best_model = model
-    print(f"Selected model: {best_model}")
+            best_model = models[model]
+            model_name = model
+    print(f"Selected model: {model_name}")
     return best_model
 
 def modeling(X, y, continuous):
@@ -197,16 +202,18 @@ def modeling(X, y, continuous):
     from sklearn.model_selection import cross_val_score
 
     models = {}
+    type_of_model = None
 
     if continuous:
         #we train regression models for a continuous target
-        #Linear Regression
+        #ensure numeric values
+        y = pd.to_numeric(y, errors = 'coerce')
         models = {
             "Linear Regression": LinearRegression(),
             "Regressor Decision Tree": DecisionTreeRegressor(),
             "Regressor Random Forest": RandomForestRegressor()
         }
-
+        type_of_model = "regression"
     else:
         y = target_categorical_preprocessing(y)
         models = {
@@ -214,13 +221,15 @@ def modeling(X, y, continuous):
             "Decision Tree": DecisionTreeClassifier(),
             "Random Forest": RandomForestClassifier()
         }
-        
+        type_of_model = "classification"
+    
+    best_model = None
     try:
-        best_model = evaulation(models, X, y)
+        best_model = evaulation(models, X, y, continuous)
     except Exception as e:
         print(f"Error evaluating models: {e}")
 
-    return
+    return best_model, type_of_model
 
 
 
@@ -233,6 +242,9 @@ def main():
     GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
     X[target_column] = X[target_column].astype(str).str.strip()
     X[target_column] = X[target_column].replace(GARBAGE_TOKENS, np.nan)
+
+    #get rid of rows that do not have target output
+    X = X.dropna(subset = [target_column])
 
     y = X.pop(target_column)
     preprocessed_dataframe = preprocess(X)
