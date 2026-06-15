@@ -14,12 +14,12 @@ The goal of the project is to minimize manual preprocessing and model selection 
 
 * Removes constant- value columns
 * Handles missing value tokens:
-  * [?]
-  * [NA]
-  * [N/A]
-  * [null]
-  * [None]
-  * [nan]
+  * [ ? ]
+  * [ NA ]
+  * [ N/A ]
+  * [ null ]
+  * [ None ]
+  * [ nan ]
 
 ### Feature Type Detection
 
@@ -71,7 +71,8 @@ Random noise feature is added to be a baseline, any feature found performing wor
 
 Models are evaluated using 5-fold cross-validation to determine effectiveness of candidate models. The highest-performing model is automatically selected
 
-## Projet Structure
+## Project Structure
+
 '''text
 project/
 |
