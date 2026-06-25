@@ -3,6 +3,9 @@ import os
 import numpy as np
 from scipy.stats import pearsonr
 
+# GLOBAL VALUES
+GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
+
 def categorical_preprocessing(dataframe, feature, unique_values):
     #binary encoding, nominal or ordinance does not really matter
     if len(unique_values) <= 2:
@@ -72,7 +75,7 @@ def load_data():
             raise ManyFilesError("Only one file in the folder at a time")
     return dataframe
 
-def usability_check(dataframe, feature):
+def mixed_types(dataframe, feature):
     numeric_count = pd.to_numeric(dataframe[feature], errors = 'coerce').notnull().sum()
     total_count = dataframe[feature].notnull().sum()
     #if the ratio of numeric values is either 100% or 0%, then we can say that it is either continuous or categorical, respectively. Otherwise, we have a mixed type and we need to do some more work to determine which one it is.
@@ -102,6 +105,23 @@ def test_continuous(series):
         return False
     return True
 
+
+# I need to define a usability function properly- it needs to check to see if there are any values that are unusuable in a categorical or continuous feature
+def usability(feature_name, type):
+
+    #if there is no real metadata, we can do nothing with the information realistically
+    if feature_name in GARBAGE_TOKENS:
+        return False;
+    
+    if type == 'continuous':
+        
+        
+        return
+    else:
+        #categorical data
+        return
+
+
 def preprocess(dataframe):
     #preprocessing
     
@@ -113,14 +133,16 @@ def preprocess(dataframe):
     GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
 
     for feature in dataframe.columns:
+        
         dataframe[feature] = dataframe[feature].astype(str).str.strip()
         dataframe[feature] = dataframe[feature].replace(GARBAGE_TOKENS, np.nan)
         
         #now we can determine whether or not we have mixed types of numerical and categorical data
-        if not usability_check(dataframe, feature):
+        if not mixed_types(dataframe, feature):
             #mixed type would be very difficult to preprocess, so we will just drop it for now. 
             dataframe[feature].drop(columns = feature)
             continue
+
         #now we need to determine whether or not it is continuous or categorical
         #we are only testing whether or not it is categorical or continuous
         continuous = test_continuous(dataframe[feature])  
@@ -128,7 +150,10 @@ def preprocess(dataframe):
         if continuous:
             try:
                 dataframe[feature] = pd.to_numeric(dataframe[feature], errors = 'coerce')
+                
+                #I need to move this to the usability function, we do not need any features with excess in nan values...
                 dataframe[feature] = dataframe[feature].fillna(dataframe[feature].mean())
+                
                 normalization(dataframe, feature)
             except Exception as e:
                 print(f"Error processing {feature} as continuous: {e}")
@@ -235,9 +260,10 @@ def modeling(X, y, continuous):
 
 def main():    
     csv_data = load_data()
-    target_column = "classification"
+    target_column = "performance_score"
     X = csv_data.copy()
 
+    """
     #I need to preprocess some of the data separately for the target column
     GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
     X[target_column] = X[target_column].astype(str).str.strip()
@@ -253,6 +279,7 @@ def main():
     feature_selection(preprocessed_dataframe, y, continuous)
     print(F"features: {preprocessed_dataframe.columns.tolist()}")
     print(f"Removed {number_of_features - preprocessed_dataframe.shape[1]} features, kept {preprocessed_dataframe.shape[1]} features.")
-    modeling(preprocessed_dataframe, y, continuous)
+    model = modeling(preprocessed_dataframe, y, continuous)
+    """
 
 main()
