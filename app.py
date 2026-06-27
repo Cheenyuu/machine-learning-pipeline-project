@@ -3,8 +3,19 @@ import os
 import numpy as np
 from scipy.stats import pearsonr
 
+
+def LOAD_MANUAL_OVERRIDE():
+    override_file = open("MANUAL_OVERRIDE_FILE.txt")
+    tokens = override_file.read().split()
+    return tokens
+
 # GLOBAL VALUES
 GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
+REMOVED_FEATURES = {}
+PREDEFINED_REMOVE_FLAGS = ['name', 'time', 'id']
+MANUAL_OVERRIDE_TOKENS = LOAD_MANUAL_OVERRIDE()
+#feature metadata idea
+METADATA = {}
 
 def categorical_preprocessing(dataframe, feature, unique_values):
     #binary encoding, nominal or ordinance does not really matter
@@ -34,22 +45,16 @@ def target_categorical_preprocessing(target_column):
         print(f"Error converting target column to integer value")
 
 def normalization(dataframe, feature):
-    #with the dataframe and the feature, I need to be able to normalize
     series = dataframe[feature]
+
     min_val = series.min()
     max_val = series.max()
+
     if min_val == max_val:
-        try:
-            dataframe[feature] = pd.Series([0.0] * len(series), index = series.index)
-        except Exception as e:
-            print(f"Error normalizing {feature}: {e}")
-            return 1
-    try:
-        dataframe[feature] = (series - min_val) / (max_val - min_val)
-        return 1
-    except Exception as e:
-        print(f"Error normalizing {feature}: {e}")
-        return 0
+        dataframe[feature] = 0.0
+        return
+
+    dataframe[feature] = (series - min_val) / (max_val - min_val)
 
 class ManyFilesError(Exception):
     """Too many files within a single folder"""
@@ -75,31 +80,6 @@ def load_data():
             raise ManyFilesError("Only one file in the folder at a time")
     return dataframe
 
-def mixed_types(dataframe, feature):
-    numeric_count = pd.to_numeric(dataframe[feature], errors = 'coerce').notnull().sum()
-    total_count = dataframe[feature].notnull().sum()
-    #if the ratio of numeric values is either 100% or 0%, then we can say that it is either continuous or categorical, respectively. Otherwise, we have a mixed type and we need to do some more work to determine which one it is.
-    return numeric_count / total_count >= 1.0 or numeric_count / total_count <= 0.0
-
-# I need to define a usability function properly- it needs to check to see if there are any values that are unusuable in a categorical or continuous feature
-def usability(data, feature_name, type):
-
-    #if there is no real metadata, we can do nothing with the information realistically
-    if feature_name in GARBAGE_TOKENS:
-        return False;
-    
-    #high missingness...
-    missing_values = data[feature_name].isna().sum()
-    if missing_values / len(data) > .5:
-        return False
-
-    if type == 'continuous':
-                
-        return
-    else:
-        #categorical data
-        return
-
 def test_continuous(series):
     #first let's test if the values themselves are numeric
     try:
@@ -123,6 +103,12 @@ def test_continuous(series):
     if entropy(prob) < 1.0:
         return False
     return True
+
+def mixed_types(dataframe, feature):
+    numeric_count = pd.to_numeric(dataframe[feature], errors = 'coerce').notnull().sum()
+    total_count = dataframe[feature].notnull().sum()
+    #if the ratio of numeric values is either 100% or 0%, then we can say that it is either continuous or categorical, respectively. Otherwise, we have a mixed type and we need to do some more work to determine which one it is.
+    return numeric_count / total_count >= 1.0 or numeric_count / total_count <= 0.0
 
 def preprocess(dataframe):
     #preprocessing
@@ -200,7 +186,6 @@ def feature_selection(preprocessed_dataframe, y, continuous):
     
     return
 
-
 def evaulation(models, X, y, continuous):
     from sklearn.model_selection import cross_val_score
     scoring = 'r2'
@@ -258,18 +243,136 @@ def modeling(X, y, continuous):
 
     return best_model, type_of_model
 
+# I need to define a usability function properly- it needs to check to see if there are any values that are unusuable in a categorical or continuous feature
+def usability(data, feature_name):
+    #if there is no real metadata, we can do nothing with the information realistically
+    if feature_name in GARBAGE_TOKENS:
+        REMOVED_FEATURES[feature_name] = "feature has data not correlated to label"
+        return False;
+    
+    #high missingness...
+    missing_values = data[feature_name].isna().sum()
+    if missing_values / len(data) > .5:
+        REMOVED_FEATURES[feature_name] = "feature has too many missing values"
+        return False
 
+    #we don't want to use datetime or id for a learning model for now. whole different type of data that needs to be parsed in a new way
+    for rfn in PREDEFINED_REMOVE_FLAGS:
+        if rfn in feature_name and rfn not in MANUAL_OVERRIDE_TOKENS:
+            for override in MANUAL_OVERRIDE_TOKENS:
+                if override in feature_name:
+                    break
+                else:
+                    REMOVED_FEATURES[feature_name] = "feature is predetermined to be unreliable"
+                    return False
+
+    total_entries = data[feature_name].notnull().sum()
+    #no mixed types within the same column, too difficult to parse at this moment.
+    numeric_count = pd.to_numeric(data[feature_name], errors = 'coerce').notnull().sum()
+    ratio = numeric_count/total_entries
+    if ratio < 1.0 and ratio > 0.0:
+        REMOVED_FEATURES[feature_name] = "feature has mixed types ~ likely inconclusive or muddled result from machine evaluation alone"
+        return False
+    
+    return True
+
+#determine type is going to be a lot harder than I initially think
+def initial_type_prediction(series):
+    #the idea is that if this number_check comes out as anything other than 1.0 as a ratio, then there are strings
+    temp = pd.to_numeric(series, errors = 'coerce')
+    number_ratio = temp.notna().mean()
+    #this is pretty much the only guaranteed way I have a categorical output
+    if number_ratio != 1.0:
+        #it's strings so there's no chance of numerical outputs... in theory
+        return 'categorical'
+    #not even a guarantee in this scenario.
+    #finding decimals
+    if (temp%1 != 0).any():
+        return 'continuous'
+    #no string, only integers, which means it could be categorical or not...
+    total_count = series.notnull().sum()
+    #cardinality check- in theory if we have a lot of categories then it should be continuous most likely
+    if temp.nunique()/total_count > 0.9:
+        return 'continuous'
+    return 'categorical'
+
+#initially cleaning the data and categorizing the features based on their immediate declarations through defined metadata
+def initial_clean(data):
+    for feature in data.columns:
+        #get rid of garbage tokens, replace with nan values if they exist
+        data[feature] = data[feature].astype(str).str.strip()
+        data[feature] = data[feature].replace(GARBAGE_TOKENS, np.nan)
+        
+        #test to see if the feature is usable
+        if not usability(data, feature):
+            data.drop(columns = feature, inplace = True)
+            continue
+        
+        #determine whether it is categorical or continuous
+        if initial_type_prediction(data[feature]) == 'continuous':
+            #continuous
+            METADATA[feature] = "continuous"
+        else:
+            #categorical
+            METADATA[feature] = "categorical"
+    return
+
+def initial_continuous_preprocessing(data, feature):
+    data[feature] = pd.to_numeric(data[feature], errors = 'coerce')
+    skew = data[feature].skew()
+    if abs(skew) > 0.5:
+        data[feature] = data[feature].fillna(data[feature].median())
+    else:
+        data[feature] = data[feature].fillna(data[feature].mean())    
+    normalization(data, feature)
+
+def preprocess_proto(data):
+    for feature in data.columns:
+        if METADATA[feature] == 'continuous':
+            initial_continuous_preprocessing(data, feature)
+        else:
+            continue
+    return
+
+#predefined print for removed data- properly formatted
+def print_removed():
+    print("==========================================")
+    for feature in REMOVED_FEATURES:
+        print(f"[XXX]REMOVED: {feature}\nREASON: {REMOVED_FEATURES[feature]}\n")
+    print("==========================================")
+    return
+
+def print_metadata():
+    print("==========================================")
+    for feature in METADATA:
+        print(f"[]FEATURE: {feature}\n[]TYPE: {METADATA[feature]}\n")
+    print("==========================================")
 
 def main():    
     csv_data = load_data()
     target_column = "performance_score"
     X = csv_data.copy()
 
+
+    #get rid of all nan values
+    X[target_column] = X[target_column].astype(str).str.strip()
+    X[target_column] = X[target_column].replace(GARBAGE_TOKENS, np.nan)
+
+    X.dropna(subset = [target_column])
+
+    y = X.pop(target_column)
+
+    initial_clean(X)
+
+    preprocess_proto(X)
+
     """
     #I need to preprocess some of the data separately for the target column
     GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
     X[target_column] = X[target_column].astype(str).str.strip()
     X[target_column] = X[target_column].replace(GARBAGE_TOKENS, np.nan)
+
+    dropna() of the target column (we cannot have missing target column values)
 
     #get rid of rows that do not have target output
     X = X.dropna(subset = [target_column])
@@ -285,3 +388,5 @@ def main():
     """
 
 main()
+
+    
