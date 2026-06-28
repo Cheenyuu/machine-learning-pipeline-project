@@ -2,7 +2,18 @@ import pandas as pd
 import os
 import numpy as np
 from scipy.stats import pearsonr
+from tqdm import tqdm
 
+class feature_metadata:
+    def __init__(self, feature_name):
+        self.name = feature_name
+        self.type = None
+
+    def show_metadata(self):
+        print("[]------------------------------------------------[]")
+        print(f"feature name: {self.name}\nfeature type: {self.type}")
+        print("[]------------------------------------------------[]")
+        return
 
 def LOAD_MANUAL_OVERRIDE():
     override_file = open("MANUAL_OVERRIDE_FILE.txt")
@@ -16,26 +27,6 @@ PREDEFINED_REMOVE_FLAGS = ['name', 'time', 'id', 'jersey']
 MANUAL_OVERRIDE_TOKENS = LOAD_MANUAL_OVERRIDE()
 #feature metadata idea
 METADATA = {}
-
-def categorical_preprocessing(dataframe, feature, unique_values):
-    #binary encoding, nominal or ordinance does not really matter
-    if len(unique_values) <= 2:
-        try:
-            dataframe[feature], _ = dataframe[feature].factorize()
-            return 1
-        except Exception as e:
-            print(f"Error mapping {feature}: {e}")
-            return 0
-    #one-hot encoding for more than two categories
-    else:
-        for value in unique_values:
-            try:
-                dataframe[f"{feature}_{value}"] = (dataframe[feature] == value).astype(int)
-            except Exception as e:
-                print(f"Error creating one-hot column for {feature}_{value}: {e}")
-                return 0
-        dataframe.drop(columns = [feature], inplace = True)
-        return 1
 
 def target_categorical_preprocessing(target_column):
     try:
@@ -80,95 +71,6 @@ def load_data():
             raise ManyFilesError("Only one file in the folder at a time")
     return dataframe
 
-def test_continuous(series):
-    #first let's test if the values themselves are numeric
-    try:
-        temp = pd.to_numeric(series, errors = 'coerce')
-    except Exception as e:
-        return False
-    #ratio test
-    n_unique = temp.nunique()
-    ratio = n_unique / len(series)
-    if n_unique < 10 or ratio < 0.05:
-        return False
-    #diff test
-    if pd.api.types.is_integer_dtype(temp):
-        diffs = np.diff(sorted(temp.unique()))
-        if len(np.unique(diffs)) <= 3:
-            return False
-    #entropy test (continuous features should have higher entropy)    
-    from scipy.stats import entropy
-    counts = temp.value_counts()
-    prob = counts / counts.sum()
-    if entropy(prob) < 1.0:
-        return False
-    return True
-
-def mixed_types(dataframe, feature):
-    numeric_count = pd.to_numeric(dataframe[feature], errors = 'coerce').notnull().sum()
-    total_count = dataframe[feature].notnull().sum()
-    #if the ratio of numeric values is either 100% or 0%, then we can say that it is either continuous or categorical, respectively. Otherwise, we have a mixed type and we need to do some more work to determine which one it is.
-    return numeric_count / total_count >= 1.0 or numeric_count / total_count <= 0.0
-
-def preprocess(dataframe):
-    #preprocessing
-    
-    #get rid of any constant columns
-    constant_cols = [col for col in dataframe.columns if dataframe[col].nunique() <= 1]
-    dataframe.drop(columns = constant_cols, inplace = True)
-    
-    #we want to get rid of as many garbage tokens as possible, and then we will determine whether or not the feature is categorical or continuous
-    GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
-
-    for feature in dataframe.columns:
-        
-        dataframe[feature] = dataframe[feature].astype(str).str.strip()
-        dataframe[feature] = dataframe[feature].replace(GARBAGE_TOKENS, np.nan)
-        
-        #now we can determine whether or not we have mixed types of numerical and categorical data
-        if not mixed_types(dataframe, feature):
-            #mixed type would be very difficult to preprocess, so we will just drop it for now. 
-            dataframe[feature].drop(columns = feature)
-            continue
-
-        #now we need to determine whether or not it is continuous or categorical
-        #we are only testing whether or not it is categorical or continuous
-        continuous = test_continuous(dataframe[feature])  
-
-        if continuous:
-            try:
-                dataframe[feature] = pd.to_numeric(dataframe[feature], errors = 'coerce')
-                
-                #I need to move this to the usability function, we do not need any features with excess in nan values...
-                dataframe[feature] = dataframe[feature].fillna(dataframe[feature].mean())
-                
-                normalization(dataframe, feature)
-            except Exception as e:
-                print(f"Error processing {feature} as continuous: {e}")
-        else:
-            try:
-                #we need to test if it's all unique values, in which case we can just drop it. Otherwise, we can do categorical preprocessing.
-                if dataframe[feature].nunique() == dataframe[feature].notnull().sum():
-                    dataframe.drop(columns = feature, inplace = True)
-                    continue
-                dataframe[feature] = dataframe[feature].fillna(dataframe[feature].mode()[0])
-                categorical_preprocessing(dataframe, feature, dataframe[feature].dropna().unique())
-            except Exception as e:
-                print(f"Error processing {feature} as categorical: {e}")
-        #by the end, we know everything should be numerical, so we can test the variance of the entire dataset to determine whether or not we need to 
-        #drop those columns
-        threshold = 0.01
-        #variance = dataframe[feature].var()
-
-    threshold = 0.01
-    low_var_cols = [col for col in dataframe.columns if dataframe[col].var() < threshold]
-    try:
-        dataframe.drop(columns = low_var_cols, inplace = True)
-    except Exception as e:
-        print(f"Error dropping low variance columns: {e}")
-    return dataframe
-
-
 def feature_selection(preprocessed_dataframe, y, continuous):
     from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
     preprocessed_dataframe["random_noise"] = np.random.randn(len(preprocessed_dataframe))
@@ -186,28 +88,28 @@ def feature_selection(preprocessed_dataframe, y, continuous):
     
     return
 
-def evaulation(models, X, y, continuous):
+def evaulation(models, X, y, type):
     from sklearn.model_selection import cross_val_score
-    scoring = 'r2'
-    if continuous:
-        scoring = 'f1'
+    scoring = 'f1'
+    if type == 'continuous':
+        scoring = 'r2'
     model_name = None
     best_model = None
     best_score = float("-inf")
     print("Models Evaluated:")
     print("------------------------------")
-    for model in models:
+    for model in tqdm(models, desc = "Evaluating Models"):
+        print(f"\n{model}")
         score = cross_val_score(models[model], X, y, cv = 5, scoring = scoring).mean()
-        print(f"{model}")
         print(f"Cross validation score mean: {score}\n\n")
         if score > best_score:
             best_score = score
             best_model = models[model]
             model_name = model
     print(f"Selected model: {model_name}")
-    return best_model
+    return best_model, model_name, best_score
 
-def modeling(X, y, continuous):
+def modeling(X, y, type):
     from sklearn.linear_model import LinearRegression, LogisticRegression
     from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
     from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
@@ -216,14 +118,15 @@ def modeling(X, y, continuous):
     models = {}
     type_of_model = None
 
-    if continuous:
+    if type == "continuous":
         #we train regression models for a continuous target
         #ensure numeric values
         y = pd.to_numeric(y, errors = 'coerce')
         models = {
             "Linear Regression": LinearRegression(),
             "Regressor Decision Tree": DecisionTreeRegressor(),
-            "Regressor Random Forest": RandomForestRegressor()
+            #limiting so it's not too in-depth for minimal performance improvement
+            "Regressor Random Forest": RandomForestRegressor(max_depth = 20, n_estimators= 25)
         }
         type_of_model = "regression"
     else:
@@ -236,12 +139,14 @@ def modeling(X, y, continuous):
         type_of_model = "classification"
     
     best_model = None
+    score = None
+    model_name = None
     try:
-        best_model = evaulation(models, X, y, continuous)
+        best_model, model_name, score = evaulation(models, X, y, type)
     except Exception as e:
         print(f"Error evaluating models: {e}")
 
-    return best_model, type_of_model
+    return best_model, type_of_model, model_name, score
 
 # I need to define a usability function properly- it needs to check to see if there are any values that are unusuable in a categorical or continuous feature
 def usability(data, feature_name):
@@ -300,8 +205,6 @@ def encode_categorical(data, feature):
     #in this function we need to be able to modify the categorical values to be readable to a machine learning algorithm.
     #in order to do this, we just need to know the cardinality first
     cardinality = data[feature].nunique()
-    if feature == 'preferred_foot':
-        print(cardinality)
     if cardinality == 1:
         #only one unique value, meaning there is likely no real important information to gain
         data.drop(columns = feature, inplace = True)
@@ -311,7 +214,13 @@ def encode_categorical(data, feature):
         data[feature], _ = data[feature].factorize()
     elif cardinality > 2 and cardinality < 100:
         #one-hot encoding
-        return pd.get_dummies(data, columns = [feature], dtype = int)
+        one_hot = pd.get_dummies(data, columns = [feature], dtype = int)
+        METADATA.pop(feature)
+        for col in one_hot:
+            metadata = feature_metadata(col)
+            metadata.type = "categorical"
+            METADATA[col] = metadata
+        return one_hot
     else:
         #for very large values, we will use frequency encoding 
         freq_map = data[feature].value_counts(normalize = True).to_dict()
@@ -329,7 +238,7 @@ def continuous_data_normalization(data, feature):
 
 #initially cleaning the data and categorizing the features based on their immediate declarations through defined metadata
 def initial_clean(data):
-    for feature in data.columns:
+    for feature in tqdm(data.columns, desc = "Cleaning Data"):
         #get rid of garbage tokens, replace with nan values if they exist
         data[feature] = data[feature].astype(str).str.strip()
         data[feature] = data[feature].replace(GARBAGE_TOKENS, np.nan)
@@ -339,14 +248,17 @@ def initial_clean(data):
             data.drop(columns = feature, inplace = True)
             continue
         
+        metadata = feature_metadata(feature)
+        METADATA[feature] = metadata
+
         #determine whether it is categorical or continuous
         if initial_type_prediction(data[feature]) == 'continuous':
             #continuous
-            METADATA[feature] = "continuous"
+            METADATA[feature].type = "continuous"
             continuous_data_normalization(data, feature)
         else:
             #categorical
-            METADATA[feature] = "categorical"
+            METADATA[feature].type = "categorical"
             data = encode_categorical(data, feature)
     return data
 
@@ -361,7 +273,7 @@ def print_removed():
 def print_metadata():
     print("==========================================")
     for feature in METADATA:
-        print(f"[]FEATURE: {feature}\n[]TYPE: {METADATA[feature]}\n")
+        METADATA[feature].show_metadata()
     print("==========================================")
 
 def main():    
@@ -379,8 +291,15 @@ def main():
 
     X = initial_clean(X)
 
-    print(X)
-    print(X.columns)
+    target_type = initial_type_prediction(y)
+
+    best_model = None
+    #initial run with initial cross-validation score
+    best_model, model_type, model_name, score = modeling(X, y, target_type)
+
+    print(f"Type: {model_type} | Mode Name: {model_name} | CV score: {score}")
+
+    #print(METADATA)
 
     """
     #I need to preprocess some of the data separately for the target column
