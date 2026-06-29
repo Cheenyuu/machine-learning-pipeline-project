@@ -137,27 +137,56 @@ def feature_selection(X):
             #error
         """
 
-
 def evaulation(models, X, y, type):
-    from sklearn.model_selection import cross_val_score
-    scoring = 'f1'
-    if type == 'continuous':
-        scoring = 'r2'
-    model_name = None
+    from sklearn.model_selection import cross_validate
+
     best_model = None
-    best_score = float("-inf")
-    print("Models Evaluated:")
-    print("------------------------------")
-    for model in tqdm(models, desc = "Evaluating Models"):
-        print(f"\n{model}")
-        score = cross_val_score(models[model], X, y, cv = 5, scoring = scoring).mean()
-        print(f"Cross validation score mean: {score}\n\n")
+    best_name = None
+    best_score = -np.inf
+
+    for name, model, in tqdm(models.items(), desc = "Evaluating Models"):
+        if type == "categorical":
+            results = cross_validate(
+                model,
+                X,
+                y,
+                cv = 5,
+                scoring = ["accuracy", "f1"]
+            )
+
+            accuracy = results["test_accuracy"].mean()
+            f1 = results["test_f1"].mean()
+
+            print(f"\n{name}")
+            print(f"Accuracy:{accuracy:.4f}")
+            print(f"F1 Score: {f1:.4f}\n")
+
+            score = f1
+        else:
+
+            results = cross_validate(
+                model,
+                X,
+                y,
+                cv = 5,
+                scoring = ["r2", "neg_mean_squared_error"]
+            )
+
+            r2 = results["test_r2"].mean()
+            mse = -results["test_neg_mean_squared_error"].mean()
+
+            print(f"\n{name}")
+            print(f"R^2: {r2:.4f}")
+            print(f"MSE: {mse:.4f}\n")
+
+            score = r2
+        
         if score > best_score:
             best_score = score
-            best_model = models[model]
-            model_name = model
-    print(f"Selected model: {model_name}")
-    return best_model, model_name, best_score
+            best_model = model
+            best_name = name
+    
+    return best_model, best_name, best_score
 
 def modeling(X, y, type):
     from sklearn.linear_model import LinearRegression, LogisticRegression
@@ -349,22 +378,24 @@ def main():
     n = X.shape[0]
     ratio = p/n
 
-    high_dimensionality = (p > 1000) or (ratio > 1)
+    print(ratio)
+
+    high_dimensionality = (p > 300) or (ratio > .01)
 
     if high_dimensionality:
-        print("[][][]WARNING: High computational cost detected, processing time expected to be increased")
+        print("[][][]WARNING: Relatively high computational cost detected, processing time expected to be increased")
     target_type = initial_type_prediction(y)
 
     best_model = None
     #initial run with initial cross-validation score
-    best_model, model_type, model_name, score = modeling(X, y, target_type)
+    #best_model, model_type, model_name, score = modeling(X, y, target_type)
 
-    print(f"Type: {model_type} | Mode; Name: {model_name} | CV score: {score}")
+    #print(f"Type: {model_type} | Mode; Name: {model_name} | score: {score}")
     
-    feature_selection(X)
-    new_model, new_model_type, new_model_name, new_score = modeling(X, y, target_type)
+    #feature_selection(X)
+    #new_model, new_model_type, new_model_name, new_score = modeling(X, y, target_type)
 
-    print(f"Type: {new_model_type} | Mode; Name: {new_model_name} | CV score: {new_score}")
+    #print(f"Type: {new_model_type} | Mode; Name: {new_model_name} | score: {new_score}")
     
 main()
 
