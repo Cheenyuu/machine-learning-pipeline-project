@@ -1,13 +1,18 @@
 import pandas as pd
 import os
 import numpy as np
+
+from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from scipy.stats import pearsonr
+from scipy.stats import chi2_contingency
 from tqdm import tqdm
 
 class feature_metadata:
     def __init__(self, feature_name):
         self.name = feature_name
         self.type = None
+        self.var = None
+        self.dom = None
 
     def show_metadata(self):
         print("[]------------------------------------------------[]")
@@ -71,22 +76,67 @@ def load_data():
             raise ManyFilesError("Only one file in the folder at a time")
     return dataframe
 
-def feature_selection(preprocessed_dataframe, y, continuous):
-    from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
-    preprocessed_dataframe["random_noise"] = np.random.randn(len(preprocessed_dataframe))
-    #[True, False, ..., True] for every feature, define whether or not it is discrete or not
-    is_discrete = preprocessed_dataframe.dtypes == int
-    if(continuous):
-        mi = mutual_info_regression(preprocessed_dataframe, y, discrete_features = is_discrete)
-    else:
-        mi = mutual_info_classif(preprocessed_dataframe, y, discrete_features = is_discrete)
-    mi = pd.Series(mi, index = preprocessed_dataframe.columns, name = "mutual_info")
-    mi = mi.sort_values(ascending = False)
-    threshold = mi["random_noise"]
-    drop_features = mi[mi <= threshold].index.tolist()
-    preprocessed_dataframe.drop(columns = drop_features, inplace = True)
-    
+def test_variance(X, feature_name):
+    if X[feature_name].var() < 0.01:
+        X.drop(columns = [feature_name], inplace = True)
+        REMOVED_FEATURES[feature_name] = "below variance threshold"
+        #true for removed
+        return True
+    return False
+
+def test_correlation(X, feature_name):
+    #greedy approach- remove any feature that has a high correlation value associated with our current feature
+    for feature in tqdm(X.columns, desc = f"correlation test using {feature_name}"):
+        #print(f"testing between {feature_name} and {feature}")
+        if METADATA[feature].type == "continuous" and feature != feature_name:
+            current_feature_data = X[feature_name]
+            comparison_feature_data = X[feature]
+            corr, p_val = pearsonr(current_feature_data, comparison_feature_data)
+            #high correlation
+            if corr >= 0.85:
+                #print(f"removed {feature}")
+                X.drop(columns = [feature], inplace = True)
+                REMOVED_FEATURES[feature] = f"high correlation to {feature_name}, corr_value of {corr}"
+
+def test_chi_square(X, feature_name):
+    for feature in tqdm(X.columns, desc = f"Chi-square test using {feature_name}"):
+        if METADATA[feature].type == "categorical" and feature != feature_name:
+            current_feature_data = X[feature_name]
+            comparison_feature_data = X[feature]
+            contingency_table = pd.crosstab(current_feature_data, comparison_feature_data)
+            chi_2, p_val, dof, expected = chi2_contingency(contingency_table)
+
+            if p_val > 0.05:
+                X.drop(columns = [feature], inplace = True)
+                REMOVED_FEATURES[feature] = f"high p_val for chi2 contingency to {feature_name}, likely dependency {p_val}"
     return
+
+def feature_selection(X):
+
+    for feature in X.columns:
+        #test both for variance
+        if feature in REMOVED_FEATURES:
+            continue
+
+        if test_variance(X, feature):
+            continue
+
+        if METADATA[feature].type == "continuous":
+            #test correlation
+            test_correlation(X, feature)
+        elif METADATA[feature].type == "categorical":
+            test_chi_square(X, feature)    
+        
+        """
+        if METADATA[feature].type == "continuous":
+            #continuous
+
+        elif METADATA[feature].type == "categorical":
+            #categorical
+        else:
+            #error
+        """
+
 
 def evaulation(models, X, y, type):
     from sklearn.model_selection import cross_val_score
@@ -214,9 +264,11 @@ def encode_categorical(data, feature):
         data[feature], _ = data[feature].factorize()
     elif cardinality > 2 and cardinality < 100:
         #one-hot encoding
+        old_columns = set(data.columns)
         one_hot = pd.get_dummies(data, columns = [feature], dtype = int)
+        new_columns = set(one_hot) - old_columns
         METADATA.pop(feature)
-        for col in one_hot:
+        for col in new_columns:
             metadata = feature_metadata(col)
             metadata.type = "categorical"
             METADATA[col] = metadata
@@ -260,6 +312,7 @@ def initial_clean(data):
             #categorical
             METADATA[feature].type = "categorical"
             data = encode_categorical(data, feature)
+        #METADATA[feature].show_metadata()
     return data
 
 #predefined print for removed data- properly formatted
@@ -276,6 +329,7 @@ def print_metadata():
         METADATA[feature].show_metadata()
     print("==========================================")
 
+
 def main():    
     csv_data = load_data()
     target_column = "performance_score"
@@ -291,37 +345,27 @@ def main():
 
     X = initial_clean(X)
 
+    p = X.shape[1]
+    n = X.shape[0]
+    ratio = p/n
+
+    high_dimensionality = (p > 1000) or (ratio > 1)
+
+    if high_dimensionality:
+        print("[][][]WARNING: High computational cost detected, processing time expected to be increased")
     target_type = initial_type_prediction(y)
 
     best_model = None
     #initial run with initial cross-validation score
     best_model, model_type, model_name, score = modeling(X, y, target_type)
 
-    print(f"Type: {model_type} | Mode Name: {model_name} | CV score: {score}")
+    print(f"Type: {model_type} | Mode; Name: {model_name} | CV score: {score}")
+    
+    feature_selection(X)
+    new_model, new_model_type, new_model_name, new_score = modeling(X, y, target_type)
 
-    #print(METADATA)
-
-    """
-    #I need to preprocess some of the data separately for the target column
-    GARBAGE_TOKENS = ['?', 'NA', 'N/A', 'null', 'None', 'nan', 'NaN', '']
-    X[target_column] = X[target_column].astype(str).str.strip()
-    X[target_column] = X[target_column].replace(GARBAGE_TOKENS, np.nan)
-
-    dropna() of the target column (we cannot have missing target column values)
-
-    #get rid of rows that do not have target output
-    X = X.dropna(subset = [target_column])
-
-    y = X.pop(target_column)
-    preprocessed_dataframe = preprocess(X)
-    number_of_features = preprocessed_dataframe.shape[1]
-    continuous = test_continuous(y)
-    feature_selection(preprocessed_dataframe, y, continuous)
-    print(F"features: {preprocessed_dataframe.columns.tolist()}")
-    print(f"Removed {number_of_features - preprocessed_dataframe.shape[1]} features, kept {preprocessed_dataframe.shape[1]} features.")
-    model = modeling(preprocessed_dataframe, y, continuous)
-    """
-
+    print(f"Type: {new_model_type} | Mode; Name: {new_model_name} | CV score: {new_score}")
+    
 main()
 
     
