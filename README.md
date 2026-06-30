@@ -1,75 +1,87 @@
-# AutoML Data Preprocessing and Model Selection Pipeline
+# AutoML Feature Selection & Modeling Pipeline
 
-## Overview
+A lightweight AutoML-style pipeline that automatically handles data cleaning, feature type inference, feature selection, encoding, normalization, and model evaluation for both classification and regression problems.
 
-This project implements all steps needed to automate a machine learning pipeline. The project preprocesses tabular datasets, performs feature selection, trains multiple models, and automatically selects the best performing model using cross-validation.
-
-The goal of the project is to minimize manual preprocessing and model selection for students who are new to machine learning and data mining.
+The goal of this project is to take a raw CSV dataset and produce a competitive baseline model with minimal manual preprocessing.
 
 ---
 
 ## Features
 
-### Automated Data Cleaning
+### Automatic Feature Understanding
+- Infers feature types (categorical vs continuous)
+- Detects unusable or noisy features
+- Handles mixed-type columns
+- Identifies ID-like or irrelevant columns automatically
 
-* Removes constant- value columns
-* Handles missing value tokens:
-  * [ ? ]
-  * [ NA ]
-  * [ N/A ]
-  * [ null ]
-  * [ None ]
-  * [ nan ]
+---
 
-### Feature Type Detection
+### Data Cleaning
+- Standardizes missing values (`?, NA, null, NaN`, etc.)
+- Removes features with more than 50% missing values
+- Drops predefined unreliable features (e.g., `id`, `time`, `name`)
+- Tracks removed features with explanations
 
-Automatically determines whether a feature should be treated as 
+---
 
-* Continuous
-* Categorical
+### Feature Engineering
 
-using:
+#### Continuous Features
+- Missing value imputation:
+  - Median (if skewed)
+  - Mean (otherwise)
+- Min-max normalization
 
-* Numeric ratio checks
-* Unique value ratios
-* Entropy measurements
-* Integer spacing analysis
+#### Categorical Features
+- Binary encoding (2 unique values)
+- One-hot encoding (less than 100 categories)
+- Frequency encoding (high cardinality)
 
-### Continuous Feature Processing
-
-* Converts values to numeric types
-* Fills missing values with the feature mean
-* Applies Min-Max normalization
-
-### Categorical Feature Processing
-
-* Binary factor encoding for two-category variables
-* One-hot encoding for multi-category variables
-* Fills missing values using the mode
+---
 
 ### Feature Selection
 
-Uses Mutual Information to evaluate relevance.
+Uses a combination of statistical and heuristic methods:
 
-Random noise feature is added to be a baseline, any feature found performing worse than random noise is automatically removed.
+- Low variance filtering
+- Pearson correlation pruning (continuous features)
+- Chi-square independence testing (categorical features)
+- Mutual information ranking (supervised selection)
+- Random noise baseline thresholding
 
-### Model Selection
+---
 
-#### Classification Models
+### Model Training and Evaluation
 
-* Logistic Regression
-* Decision Tree Classifier
-* Random Forest Classifier
+Automatically trains and compares multiple models:
 
-#### Regression Models
+#### Classification
+- Logistic Regression
+- Decision Tree Classifier
+- Random Forest Classifier
 
-* Linear Regression
-* Decision Tree Regressor
-* Random Forest Regressor
+#### Regression
+- Linear Regression
+- Decision Tree Regressor
+- Random Forest Regressor
 
-### Evaluation
+Evaluation uses 5-fold cross-validation:
+- Classification: Accuracy, F1-score
+- Regression: R², Mean Squared Error
 
-Models are evaluated using 5-fold cross-validation to determine effectiveness of candidate models. The highest-performing model is automatically selected
+The best model is selected based on the primary metric (F1 or R²).
+
+---
+
+### High-Dimensional Mode
+If dataset complexity is high:
+- Automatically triggers fast feature selection
+- Re-evaluates model performance after pruning
+- Compares performance before and after feature reduction
+
+---
+
+## Project Structure
 
 ## Project Structure
 
