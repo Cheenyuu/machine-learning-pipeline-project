@@ -7,6 +7,14 @@ from scipy.stats import pearsonr
 from scipy.stats import chi2_contingency
 from tqdm import tqdm
 
+#I need to be able to tell the user what kind of inputs to enter...
+class artifact:
+    def __init__(self):
+        metadata = None
+        model = None
+        features = None
+        encoding = None
+
 class feature_metadata:
     def __init__(self, feature_name):
         self.name = feature_name
@@ -32,24 +40,32 @@ MANUAL_OVERRIDE_TOKENS = LOAD_MANUAL_OVERRIDE()
 #feature metadata idea
 METADATA = {}
 
-def target_categorical_preprocessing(target_column):
-    try:
-        target_column, _ = target_column.factorize()
-        return target_column
-    except Exception as e:
-        print(f"Error converting target column to integer value")
+class PipeLineState:
+    def __init__(self):
+        self.stage = ""
+        self.progress = 0
+        self.logs = []
 
-def normalization(dataframe, feature):
-    series = dataframe[feature]
+        self.current_model = ""
+        self.best_model = ""
+        self.score = ""
 
-    min_val = series.min()
-    max_val = series.max()
+        self.fold = 0
+        self.total_folds = 5
 
-    if min_val == max_val:
-        dataframe[feature] = 0.0
-        return
+state = PipeLineState()
 
-    dataframe[feature] = (series - min_val) / (max_val - min_val)
+def log(message):
+    print(message)
+    state.logs.append(message)
+
+def set_stage(stage):
+    state.stage = stage
+
+def set_percent(percent):
+    state.progress = percent
+
+#-------------------------------------------- BACKEND --------------------------------------#
 
 class ManyFilesError(Exception):
     """Too many files within a single folder"""
@@ -74,6 +90,25 @@ def load_data():
         else:
             raise ManyFilesError("Only one file in the folder at a time")
     return dataframe
+
+def target_categorical_preprocessing(target_column):
+    try:
+        target_column, _ = target_column.factorize()
+        return target_column
+    except Exception as e:
+        print(f"Error converting target column to integer value")
+
+def normalization(dataframe, feature):
+    series = dataframe[feature]
+
+    min_val = series.min()
+    max_val = series.max()
+
+    if min_val == max_val:
+        dataframe[feature] = 0.0
+        return
+
+    dataframe[feature] = (series - min_val) / (max_val - min_val)
 
 def test_variance(X, feature_name):
     if X[feature_name].var() < 0.01:
@@ -150,8 +185,7 @@ def fast_selection(X, y, type):
             #test correlation
             test_correlation(X, feature)
         elif METADATA[feature].type == "categorical":
-            test_chi_square(X, feature)    
-        
+            test_chi_square(X, feature)       
 
 def evaulation(models, X, y, type):
     from sklearn.model_selection import cross_validate
@@ -161,6 +195,10 @@ def evaulation(models, X, y, type):
     best_score = -np.inf
 
     for name, model, in tqdm(models.items(), desc = "Evaluating Models"):
+        
+        state.current_model = name
+        log(f"Training {name}")
+
         if type == "categorical":
             results = cross_validate(
                 model,
@@ -335,7 +373,10 @@ def continuous_data_normalization(data, feature):
 
 #initially cleaning the data and categorizing the features based on their immediate declarations through defined metadata
 def initial_clean(data):
+    set_stage("Cleaning")
+
     for feature in tqdm(data.columns, desc = "Cleaning Data"):
+        log(f"Cleaning {feature}...")
         #get rid of garbage tokens, replace with nan values if they exist
         data[feature] = data[feature].astype(str).str.strip()
         data[feature] = data[feature].replace(GARBAGE_TOKENS, np.nan)
@@ -374,45 +415,46 @@ def print_metadata():
         METADATA[feature].show_metadata()
     print("==========================================")
 
+def fit():  
 
-def main():    
-    csv_data = load_data()
+    #load dataset
+    socketio.emit("log", "Loading data", broadcoast = True)
+    socketio.sleep(0.1)  
+    """csv_data = load_data()
     target_column = "performance_score"
     X = csv_data.copy()
-
     #get rid of all nan values
     X[target_column] = X[target_column].astype(str).str.strip()
     X[target_column] = X[target_column].replace(GARBAGE_TOKENS, np.nan)
-
     X.dropna(subset = [target_column])
-
     y = X.pop(target_column)
 
+    #cleaning
+    socketio.emit("log", "Cleaning data...")
     X = initial_clean(X)
-
     p = X.shape[1]
     n = X.shape[0]
     ratio = p/n
-
     print(ratio)
-
     high_dimensionality = (p > 300) or (ratio > .01)
-
     if high_dimensionality:
         print("[][][]WARNING: Relatively high computational cost detected, processing time expected to be increased")
-    
+        socketio.emit("log", "[][][]WARNING: Relatively high computational cost detected, processing time expected to be increased")
     target_type = initial_type_prediction(y)
 
+    #model training
+    socketio.emit("log", "Starting initial model training...")
     best_model = None
     #initial run with initial cross-validation score
     best_model, model_type, model_name, score = modeling(X, y, target_type)
-
     print(f"\nType: {model_type} | Mode; Name: {model_name} | score: {score}\n")
     
-    #
+    #feature selection
+    
     if high_dimensionality:
         temp_dataset = X.copy()
         print("Testing quick removal techniques to mitigate number of columns")    
+        socketio.emit("log", "Testing quick removal techniques to mitigate number of columns")
         b4 = len(X.columns)
         print(f"Number of features before selection: {len(X.columns)}")
         fast_selection(temp_dataset, y, target_type)
@@ -432,8 +474,70 @@ def main():
             print("evaluation successful, new parameters set")
             X = temp_dataset
             best_model = new_model
-    
+    """
 
-main()
+#MAKING IT A WEBAPP
 
+from flask import Flask, render_template
+from flask_wtf import FlaskForm
+from wtforms import FileField, SubmitField
+from werkzeug.utils import secure_filename
+from pathlib import Path
+import os
+from flask_socketio import SocketIO
+import time
+import eventlet
+eventlet.monkey_patch()
+
+app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
+
+app.config['SECRET_KEY'] = 'supersecretkey'
+app.config['UPLOAD_FILE'] = 'raw_data'
+
+class UploadFileForm(FlaskForm):
+    file = FileField("File")
+    submit = SubmitField("Upload File")
+
+def fake_fake_training():
+    socketio.emit("log", "testing new training tech")
+
+def fake_training():
+    socketio.emit("log", "Starting training...", broadcast = True)
+    #fake_fake_training()
+    for i in range(1, 11):
+        socketio.sleep(1)
+        socketio.emit("log", f"Epoch {i}/10 complete", broadcast = True)
+        socketio.emit("progress", i * 10, broadcast = True)
     
+    socketio.emit("log", "Training complete!", broadcast = True)
+    socketio.emit("done", {"message": "Model ready"}, broadcast = True)
+
+@app.route('/', methods = ['GET', 'POST'])
+@app.route('/home', methods = ['GET', 'POST'])
+def home():
+    form = UploadFileForm()
+    string_output = ""
+    if form.validate_on_submit():
+        socketio.start_background_task(fake_training)
+        #check if a file exists in the folder already- if it does, we need to delete it
+        folder = Path(app.config['UPLOAD_FILE'])
+        has_file = any(item.is_file() for item in folder.iterdir())
+        if not has_file:
+            file = form.file.data
+            file.save(os.path.join(os.path.abspath(os.path.dirname(__file__)),app.config['UPLOAD_FILE'], secure_filename(file.filename)))
+            string_output = "File has been uploaded"
+        else:
+            delete_string = ""
+            #delete files
+            for item in folder.iterdir():
+                delete_string = delete_string + f"\ndeleted {item.name}"
+                item.unlink()
+            file = form.file.data
+            file.save(os.path.join(os.path.abspath(os.path.dirname(__file__)),app.config['UPLOAD_FILE'], secure_filename(file.filename)))
+            string_output =  f"File has been uploaded ~ Deleted files: {delete_string}"
+    return render_template('index.html', form = form, string_output = string_output)
+
+
+if __name__ == '__main__':
+    socketio.run(app, debug = True)

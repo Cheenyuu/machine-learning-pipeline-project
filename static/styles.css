@@ -1,0 +1,27 @@
+body{
+    background: gray;
+}
+
+.terminal{
+    background:#111;
+    color:lightgray;
+    font-family:monospace;
+    padding:15px;
+    height:400px;
+    overflow-y:auto;
+    white-space:pre-wrap;
+}
+
+.progress-container{
+    width:100%;
+    height:20px;
+    background: #222;
+    margin-top:10px;
+}
+
+.progress-bar{
+    height:100%;
+    width:0%;
+    background: #00ff66;
+    transition: width 0.2s;
+}
