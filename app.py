@@ -11,8 +11,7 @@ class feature_metadata:
     def __init__(self, feature_name):
         self.name = feature_name
         self.type = None
-        self.var = None
-        self.dom = None
+        self.description = None
 
     def show_metadata(self):
         print("[]------------------------------------------------[]")
@@ -80,6 +79,7 @@ def test_variance(X, feature_name):
     if X[feature_name].var() < 0.01:
         X.drop(columns = [feature_name], inplace = True)
         REMOVED_FEATURES[feature_name] = "below variance threshold"
+        METADATA.pop(feature_name)
         #true for removed
         return True
     return False
@@ -97,6 +97,7 @@ def test_correlation(X, feature_name):
                 #print(f"removed {feature}")
                 X.drop(columns = [feature], inplace = True)
                 REMOVED_FEATURES[feature] = f"high correlation to {feature_name}, corr_value of {corr}"
+                METADATA.pop(feature)
 
 def test_chi_square(X, feature_name):
     for feature in tqdm(X.columns, desc = f"Chi-square test using {feature_name}"):
@@ -109,11 +110,35 @@ def test_chi_square(X, feature_name):
             if p_val > 0.05:
                 X.drop(columns = [feature], inplace = True)
                 REMOVED_FEATURES[feature] = f"high p_val for chi2 contingency to {feature_name}, likely dependency {p_val}"
+                METADATA.pop(feature)
     return
 
-def feature_selection(X):
+#if there is a high MI value for a single feature, we want to keep it.
+def MI_categorization(X, y, type):
+    print("Running mutual information test...")
+    X["random_noise"] = np.random.randn(len(X))
+    is_discrete = X.dtypes == int
+    mi = None
+    if type == "continuous":
+        mi = mutual_info_regression(X, y, discrete_features = is_discrete)
+    else:
+        mi = mutual_info_classif(X, y, discrete_features = is_discrete)
+    
+    mi = pd.Series(mi, index = X.columns, name = "mutual_info")
+    mi = mi.sort_values(ascending = False)
+    threshold = mi["random_noise"]
+    good_features = mi[mi>threshold].index.tolist()
+    X.drop(columns = ["random_noise"], inplace = True)
+    return good_features
+
+def fast_selection(X, y, type):
+
+    good_features = MI_categorization(X, y, type)
 
     for feature in X.columns:
+        if feature in good_features:
+            continue
+
         #test both for variance
         if feature in REMOVED_FEATURES:
             continue
@@ -127,15 +152,6 @@ def feature_selection(X):
         elif METADATA[feature].type == "categorical":
             test_chi_square(X, feature)    
         
-        """
-        if METADATA[feature].type == "continuous":
-            #continuous
-
-        elif METADATA[feature].type == "categorical":
-            #categorical
-        else:
-            #error
-        """
 
 def evaulation(models, X, y, type):
     from sklearn.model_selection import cross_validate
@@ -384,19 +400,40 @@ def main():
 
     if high_dimensionality:
         print("[][][]WARNING: Relatively high computational cost detected, processing time expected to be increased")
+    
     target_type = initial_type_prediction(y)
 
     best_model = None
     #initial run with initial cross-validation score
-    #best_model, model_type, model_name, score = modeling(X, y, target_type)
+    best_model, model_type, model_name, score = modeling(X, y, target_type)
 
-    #print(f"Type: {model_type} | Mode; Name: {model_name} | score: {score}")
+    print(f"\nType: {model_type} | Mode; Name: {model_name} | score: {score}\n")
     
-    #feature_selection(X)
-    #new_model, new_model_type, new_model_name, new_score = modeling(X, y, target_type)
+    #
+    if high_dimensionality:
+        temp_dataset = X.copy()
+        print("Testing quick removal techniques to mitigate number of columns")    
+        b4 = len(X.columns)
+        print(f"Number of features before selection: {len(X.columns)}")
+        fast_selection(temp_dataset, y, target_type)
+        print(f"Number of feature after selection: {len(X.columns)}")
+        aftr = len(temp_dataset.columns)
+        new_model, new_model_type, new_model_name, new_score = modeling(X, y, target_type)
+        print(f"\nType: {new_model_type} | Mode; Name: {new_model_name} | score: {new_score}\n")
+        print("Comparing performance metrics...")
+        
+        #scoring based on number removed and improvement or lack of improvement
+        number_removed_score = b4-aftr/b4
+        score_difference = -(score - new_score)
 
-    #print(f"Type: {new_model_type} | Mode; Name: {new_model_name} | score: {new_score}")
+        if number_removed_score + score_difference <= 0:
+            print("evauation failed, keeping old parameters...")
+        else:
+            print("evaluation successful, new parameters set")
+            X = temp_dataset
+            best_model = new_model
     
+
 main()
 
     
