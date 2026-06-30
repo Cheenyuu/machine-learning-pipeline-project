@@ -164,18 +164,7 @@ Select Best Model
 ## Example Output
 
 ```text
-Models Evaluated:
-------------------------------
-Logistic Regression
-Cross validation score mean: 0.91
-
-Decision Tree
-Cross validation score mean: 0.88
-
-Random Forest
-Cross validation score mean: 0.94
-
-Selected model: Random Forest
+Type: regression | Mode; Name: Linear Regression | score: 0.992
 ```
 
 ---
